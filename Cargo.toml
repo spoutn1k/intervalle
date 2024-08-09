@@ -1,0 +1,9 @@
+[package]
+name = "since"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1.0.63"
+time = "0.3.36"
+winnow = "0.6.18"

@@ -1,11 +1,10 @@
 use time::ext::NumericalDuration;
-#[allow(unused_imports)]
 use winnow::{
-    ascii::{digit1, space0, space1},
-    combinator::{alt, eof, fail, opt, preceded, repeat, separated_pair, seq, terminated},
-    error::{AddContext, ContextError, ParseError, ParserError, StrContext, StrContextValue},
+    ascii::digit1,
+    combinator::{alt, cut_err, opt, preceded, separated_pair},
+    error::{ContextError, ParseError, StrContext, StrContextValue},
     prelude::*,
-    token::{literal, take_until, take_while},
+    token::literal,
 };
 
 #[derive(PartialEq, Debug)]
@@ -15,16 +14,20 @@ pub enum TimeSpec {
     Point(time::PrimitiveDateTime),
 }
 
-fn yesterday(
-    anchor: time::PrimitiveDateTime,
-) -> Result<time::PrimitiveDateTime, time::error::ComponentRange> {
-    Ok(anchor.date().midnight().checked_sub(1.days()).unwrap())
+fn yesterday(anchor: time::PrimitiveDateTime) -> time::PrimitiveDateTime {
+    anchor
+        .date()
+        .midnight()
+        .checked_sub(1.days())
+        .expect("Unreacheable, we allow 4 digit years and the library supports i32")
 }
 
-fn tomorrow(
-    anchor: time::PrimitiveDateTime,
-) -> Result<time::PrimitiveDateTime, time::error::ComponentRange> {
-    Ok(anchor.date().midnight().checked_add(1.days()).unwrap())
+fn tomorrow(anchor: time::PrimitiveDateTime) -> time::PrimitiveDateTime {
+    anchor
+        .date()
+        .midnight()
+        .checked_add(1.days())
+        .expect("Unreacheable, we allow 4 digit years and the library supports i32")
 }
 
 macro_rules! digits {
@@ -32,6 +35,7 @@ macro_rules! digits {
         digit1
             .verify(|s: &str| s.len() == $len)
             .try_map(str::parse::<$dest>)
+            .context(StrContext::Label("digit count"))
     };
 }
 
@@ -39,13 +43,24 @@ macro_rules! date {
     () => {
         (
             digits!(4, u16),
-            preceded("-", digits!(2, u8)),
-            preceded("-", digits!(2, u8)),
+            preceded(
+                cut_err("-")
+                    .context(StrContext::Label("date delimiter"))
+                    .context(StrContext::Expected(StrContextValue::CharLiteral('-'))),
+                digits!(2, u8),
+            ),
+            preceded(
+                cut_err("-")
+                    .context(StrContext::Label("date delimiter"))
+                    .context(StrContext::Expected(StrContextValue::CharLiteral('-'))),
+                digits!(2, u8),
+            ),
         )
             .try_map(|(year, month, day)| {
                 time::Date::from_calendar_date(year as i32, time::Month::try_from(month)?, day)
             })
             .map(|d| d.midnight())
+            .context(StrContext::Label("date format"))
     };
 }
 
@@ -53,8 +68,18 @@ macro_rules! time {
     () => {
         (
             digits!(2, u8),
-            preceded(":", digits!(2, u8)),
-            opt(preceded(":", digits!(2, u8))),
+            preceded(
+                cut_err(":")
+                    .context(StrContext::Label("time delimiter"))
+                    .context(StrContext::Expected(StrContextValue::CharLiteral(':'))),
+                cut_err(digits!(2, u8)),
+            ),
+            opt(preceded(
+                literal(":")
+                    .context(StrContext::Label("time delimiter"))
+                    .context(StrContext::Expected(StrContextValue::CharLiteral(':'))),
+                cut_err(digits!(2, u8)),
+            )),
         )
             .try_map(|(hour, min, sec)| time::Time::from_hms(hour, min, sec.unwrap_or(0)))
     };
@@ -77,14 +102,20 @@ impl TimeSpec {
             opt(alt(("+", "-"))),
             alt((
                 literal("today").value(anchor.date().midnight()),
-                literal("yesterday").try_map(|_| yesterday(anchor)),
-                literal("tomorrow").try_map(|_| tomorrow(anchor)),
-                separated_pair(date!(), " ", time!())
-                    .map(|(pdate, ptime)| pdate.replace_time(ptime)),
+                literal("yesterday").value(yesterday(anchor)),
+                literal("tomorrow").value(tomorrow(anchor)),
+                separated_pair(
+                    date!(),
+                    literal(" ").context(StrContext::Expected(StrContextValue::CharLiteral(' '))),
+                    cut_err(time!()).context(StrContext::Label("time")),
+                )
+                .map(|(pdate, ptime)| pdate.replace_time(ptime))
+                .context(StrContext::Label("time_and_date")),
                 date!(),
                 time!().map(|ptime| anchor.replace_time(ptime)),
             )),
         )
+            .context(StrContext::Label("timespec"))
             .map(|(modifier, dtime)| match modifier {
                 Some("+") => Self::After(dtime),
                 Some("-") => Self::Before(dtime),
@@ -246,16 +277,4 @@ fn test_after_time_no_sec() {
     let parsed = TimeSpec::parse_with_anchor("+15:28", anchor).unwrap();
 
     assert_eq!(parsed, TimeSpec::After(target))
-}
-
-#[test]
-fn test_too_early() {
-    let anchor = time::PrimitiveDateTime::new(
-        time::Date::from_calendar_date(1970, time::Month::January, 01).unwrap(),
-        time::Time::from_hms(12, 20, 45).unwrap(),
-    );
-
-    let parsed = TimeSpec::parse_with_anchor("yesterday", anchor);
-
-    assert!(parsed.is_err())
 }

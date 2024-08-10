@@ -1,4 +1,5 @@
-use time::ext::NumericalDuration;
+use std::error::Error;
+use time::{ext::NumericalDuration, OffsetDateTime, PrimitiveDateTime as DateTime, UtcOffset};
 use winnow::{
     ascii::digit1,
     combinator::{alt, cut_err, opt, preceded, separated_pair},
@@ -9,12 +10,12 @@ use winnow::{
 
 #[derive(PartialEq, Debug)]
 pub enum TimeSpec {
-    After(time::PrimitiveDateTime),
-    Before(time::PrimitiveDateTime),
-    Point(time::PrimitiveDateTime),
+    After(DateTime),
+    Before(DateTime),
+    Point(DateTime),
 }
 
-fn yesterday(anchor: time::PrimitiveDateTime) -> time::PrimitiveDateTime {
+fn yesterday(anchor: DateTime) -> DateTime {
     anchor
         .date()
         .midnight()
@@ -22,7 +23,7 @@ fn yesterday(anchor: time::PrimitiveDateTime) -> time::PrimitiveDateTime {
         .expect("Unreacheable, we allow 4 digit years and the library supports i32")
 }
 
-fn tomorrow(anchor: time::PrimitiveDateTime) -> time::PrimitiveDateTime {
+fn tomorrow(anchor: DateTime) -> DateTime {
     anchor
         .date()
         .midnight()
@@ -86,18 +87,23 @@ macro_rules! time {
 }
 
 impl TimeSpec {
-    pub fn parse(timespec: &str) -> Result<TimeSpec, Box<dyn std::error::Error>> {
-        let now: time::OffsetDateTime = std::time::SystemTime::now().into();
-        TimeSpec::parse_with_anchor(
-            timespec,
-            time::PrimitiveDateTime::new(now.date(), now.time()),
-        )
+    /// Figuring out the system's local timezone
+    fn local_offset() -> Result<UtcOffset, Box<dyn Error>> {
+        let time_zone_local = tz::TimeZone::local()?
+            .find_current_local_time_type()?
+            .ut_offset();
+
+        UtcOffset::from_whole_seconds(time_zone_local).map_err(|e| e.into())
     }
 
-    pub fn parse_with_anchor(
-        timespec: &str,
-        anchor: time::PrimitiveDateTime,
-    ) -> Result<TimeSpec, Box<dyn std::error::Error>> {
+    pub fn parse(timespec: &str) -> Result<TimeSpec, Box<dyn Error>> {
+        let now =
+            OffsetDateTime::now_utc().to_offset(Self::local_offset().unwrap_or(UtcOffset::UTC));
+
+        TimeSpec::parse_with_anchor(timespec, DateTime::new(now.date(), now.time()))
+    }
+
+    pub fn parse_with_anchor(timespec: &str, anchor: DateTime) -> Result<TimeSpec, Box<dyn Error>> {
         let out: Result<Self, ParseError<&str, ContextError>> = (
             opt(alt(("+", "-"))),
             alt((

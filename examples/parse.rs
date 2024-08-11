@@ -1,4 +1,4 @@
-use since::TimeSpec;
+use intervalle::TimeSpec;
 
 fn main() {
     let timespec = std::env::args().skip(1).next().unwrap();

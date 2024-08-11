@@ -1,11 +1,11 @@
 [package]
-name = "since"
-version = "0.1.0"
+name = "intervalle"
+version = "0.1.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Parser for time range arguments"
-homepage = "https://github.com/spoutn1k/since-rs"
-repository = "https://github.com/spoutn1k/since-rs"
+homepage = "https://github.com/spoutn1k/intervalle"
+repository = "https://github.com/spoutn1k/intervalle"
 readme = "README.md"
 keywords = ["parser", "systemd", "cli"]
 categories = ["date-and-time", "command-line-interface"]

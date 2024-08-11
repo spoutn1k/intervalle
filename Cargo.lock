@@ -18,6 +18,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "intervalle"
+version = "0.1.0"
+dependencies = [
+ "time",
+ "tz-rs",
+ "winnow",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -71,15 +80,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "since"
-version = "0.1.0"
-dependencies = [
- "time",
- "tz-rs",
- "winnow",
 ]
 
 [[package]]

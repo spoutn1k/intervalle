@@ -1,4 +1,4 @@
-# `since-rs`
+# `intervalle`
 
 This small utility crate implements the format for the `--since` argument of `systemd`'s `journalctl`:
 ```

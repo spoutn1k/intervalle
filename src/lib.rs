@@ -8,7 +8,41 @@ use winnow::{
     token::literal,
 };
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
+pub enum IntervalleError {
+    ParseError(String, String, usize),
+}
+
+impl<C> From<ParseError<&str, C>> for IntervalleError
+where
+    C: std::fmt::Display,
+{
+    fn from(ce: ParseError<&str, C>) -> Self {
+        Self::ParseError(
+            format!("{}", ce.inner()).replace("\n", ", "),
+            String::from(*ce.input()),
+            ce.offset(),
+        )
+    }
+}
+
+impl std::fmt::Display for IntervalleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match self {
+            IntervalleError::ParseError(info, input, offset) => {
+                write!(f, "\n    |\n{offset:3} | {input}\n    | ")?;
+                for _ in 0..*offset {
+                    write!(f, " ")?;
+                }
+                write!(f, "^ {info}")
+            }
+        }
+    }
+}
+
+impl Error for IntervalleError {}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum TimeSpec {
     After(DateTime),
     Before(DateTime),
@@ -96,14 +130,17 @@ impl TimeSpec {
         UtcOffset::from_whole_seconds(time_zone_local).map_err(|e| e.into())
     }
 
-    pub fn parse(timespec: &str) -> Result<TimeSpec, Box<dyn Error>> {
+    pub fn parse(timespec: &str) -> Result<TimeSpec, IntervalleError> {
         let now =
             OffsetDateTime::now_utc().to_offset(Self::local_offset().unwrap_or(UtcOffset::UTC));
 
         TimeSpec::parse_with_anchor(timespec, DateTime::new(now.date(), now.time()))
     }
 
-    pub fn parse_with_anchor(timespec: &str, anchor: DateTime) -> Result<TimeSpec, Box<dyn Error>> {
+    pub fn parse_with_anchor(
+        timespec: &str,
+        anchor: DateTime,
+    ) -> Result<TimeSpec, IntervalleError> {
         let out: Result<Self, ParseError<&str, ContextError>> = (
             opt(alt(("+", "-"))),
             alt((
@@ -130,7 +167,7 @@ impl TimeSpec {
             })
             .parse(timespec);
 
-        Ok(out.map_err(|e| e.to_string())?)
+        out.map_err(IntervalleError::from)
     }
 }
 

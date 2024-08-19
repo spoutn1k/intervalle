@@ -1,6 +1,6 @@
 [package]
 name = "intervalle"
-version = "0.1.1"
+version = "0.2.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Parser for time range arguments"
@@ -14,3 +14,6 @@ categories = ["date-and-time", "command-line-interface"]
 time = "0.3.36"
 tz-rs = "0.6.14"
 winnow = "0.6.18"
+
+[dev-dependencies]
+clap = { version = "4.5.16", features = ["derive"] }

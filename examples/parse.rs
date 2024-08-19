@@ -1,10 +1,13 @@
-use intervalle::TimeSpec;
+use clap::Parser;
+
+#[derive(Parser)]
+struct Args {
+    #[clap(required = true, value_parser = intervalle::TimeSpec::parse, allow_hyphen_values = true)]
+    intervalle: intervalle::TimeSpec,
+}
 
 fn main() {
-    let timespec = std::env::args().skip(1).next().unwrap();
+    let cli = Args::parse();
 
-    match TimeSpec::parse(&timespec) {
-        Ok(t) => println!("{t:?}"),
-        Err(e) => eprintln!("{e}"),
-    }
+    println!("Parsed: {:?}", cli.intervalle)
 }

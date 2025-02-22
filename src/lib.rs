@@ -1,11 +1,14 @@
 use std::error::Error;
-use time::{ext::NumericalDuration, OffsetDateTime, PrimitiveDateTime as DateTime, UtcOffset};
+use time::{
+    ext::NumericalDuration, OffsetDateTime, PrimitiveDateTime as DateTime, Time, UtcOffset,
+};
 use winnow::{
     ascii::digit1,
     combinator::{alt, cut_err, opt, preceded, separated_pair},
-    error::{ContextError, ParseError, StrContext, StrContextValue},
+    error::{ParseError, StrContext, StrContextValue},
     prelude::*,
     token::literal,
+    ModalResult,
 };
 
 #[derive(Debug)]
@@ -133,55 +136,103 @@ impl TimeSpec {
     pub fn parse(timespec: &str) -> Result<TimeSpec, IntervalleError> {
         let now =
             OffsetDateTime::now_utc().to_offset(Self::local_offset().unwrap_or(UtcOffset::UTC));
+        let now = DateTime::new(now.date(), now.time());
+        let time_range = TimeRange::parser
+            .parse(timespec)
+            .map_err(IntervalleError::from)?;
 
-        TimeSpec::parse_with_anchor(timespec, DateTime::new(now.date(), now.time()))
+        Ok(time_range.evaluate(now))
     }
+}
 
-    pub fn parse_with_anchor(
-        timespec: &str,
-        anchor: DateTime,
-    ) -> Result<TimeSpec, IntervalleError> {
-        let out: Result<Self, ParseError<&str, ContextError>> = (
+#[derive(Debug, Clone)]
+enum TimeRange {
+    Before(TimeRef),
+    After(TimeRef),
+    Point(TimeRef),
+}
+
+#[derive(Debug, Clone)]
+enum TimeRef {
+    Today,
+    Yesterday,
+    Tomorrow,
+    DateTime(DateTime),
+    Date(DateTime),
+    Time(Time),
+}
+
+impl TimeRef {
+    fn evaluate(&self, now: DateTime) -> DateTime {
+        match self {
+            TimeRef::Today => now.date().midnight(),
+            TimeRef::Yesterday => yesterday(now),
+            TimeRef::Tomorrow => tomorrow(now),
+            TimeRef::DateTime(dt) => *dt,
+            TimeRef::Date(d) => *d,
+            TimeRef::Time(t) => now.date().midnight().replace_time(*t),
+        }
+    }
+}
+
+impl TimeRange {
+    fn parser(timespec: &mut &str) -> ModalResult<TimeRange> {
+        (
             opt(alt(("+", "-"))),
             alt((
-                literal("today").value(anchor.date().midnight()),
-                literal("yesterday").value(yesterday(anchor)),
-                literal("tomorrow").value(tomorrow(anchor)),
+                literal("today").value(TimeRef::Today),
+                literal("yesterday").value(TimeRef::Yesterday),
+                literal("tomorrow").value(TimeRef::Tomorrow),
                 separated_pair(
                     date!(),
                     literal(" ").context(StrContext::Expected(StrContextValue::CharLiteral(' '))),
                     cut_err(time!()).context(StrContext::Label("time")),
                 )
-                .map(|(pdate, ptime)| pdate.replace_time(ptime))
+                .map(|(pdate, ptime)| TimeRef::DateTime(pdate.replace_time(ptime)))
                 .context(StrContext::Label("time_and_date")),
-                date!(),
-                time!().map(|ptime| anchor.replace_time(ptime)),
+                date!().map(TimeRef::Date),
+                time!().map(TimeRef::Time),
             )),
         )
             .context(StrContext::Label("timespec"))
             .map(|(modifier, dtime)| match modifier {
-                Some("+") => Self::After(dtime),
-                Some("-") => Self::Before(dtime),
-                None => Self::Point(dtime),
+                Some("+") => TimeRange::After(dtime),
+                Some("-") => TimeRange::Before(dtime),
+                None => TimeRange::Point(dtime),
                 _ => unreachable!(),
             })
-            .parse(timespec);
+            .parse_next(timespec)
+    }
 
-        out.map_err(IntervalleError::from)
+    fn evaluate(&self, now: DateTime) -> TimeSpec {
+        match self {
+            TimeRange::Before(dtime) => TimeSpec::Before(dtime.evaluate(now)),
+            TimeRange::After(dtime) => TimeSpec::After(dtime.evaluate(now)),
+            TimeRange::Point(dtime) => TimeSpec::Point(dtime.evaluate(now)),
+        }
     }
 }
 
 #[test]
-fn test_today() {
+fn test_parse_today() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("today").unwrap());
+}
+
+#[test]
+fn test_evaluate_today() {
     let target = time::Date::from_calendar_date(2023, time::Month::November, 11)
         .unwrap()
         .midnight();
 
     let anchor = target.replace_time(time::Time::from_hms(12, 20, 45).unwrap());
+    let range = TimeRange::Point(TimeRef::Today);
 
-    let parsed = TimeSpec::parse_with_anchor("today", anchor).unwrap();
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+#[test]
+fn test_parse_yesterday() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("yesterday").unwrap())
 }
 
 #[test]
@@ -194,10 +245,14 @@ fn test_yesterday() {
         .unwrap()
         .midnight()
         .replace_time(time::Time::from_hms(12, 20, 45).unwrap());
+    let range = TimeRange::Point(TimeRef::Yesterday);
 
-    let parsed = TimeSpec::parse_with_anchor("yesterday", anchor).unwrap();
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+#[test]
+fn test_parse_tomorrow() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("tomorrow").unwrap())
 }
 
 #[test]
@@ -210,10 +265,14 @@ fn test_tomorrow() {
         .unwrap()
         .midnight()
         .replace_time(time::Time::from_hms(12, 20, 45).unwrap());
+    let range = TimeRange::Point(TimeRef::Tomorrow);
 
-    let parsed = TimeSpec::parse_with_anchor("tomorrow", anchor).unwrap();
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+#[test]
+fn test_parse_date_time() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("2024-08-08 14:10:11").unwrap())
 }
 
 #[test]
@@ -228,9 +287,19 @@ fn test_date_time() {
         .midnight()
         .replace_time(time::Time::from_hms(12, 20, 45).unwrap());
 
-    let parsed = TimeSpec::parse_with_anchor("2024-08-08 14:10:11", anchor).unwrap();
+    let range = TimeRange::Point(TimeRef::DateTime(
+        time::Date::from_calendar_date(2024, time::Month::August, 08)
+            .unwrap()
+            .midnight()
+            .replace_time(time::Time::from_hms(14, 10, 11).unwrap()),
+    ));
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
+
+#[test]
+fn test_parse_date_time_no_sec() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("2024-08-08 14:10").unwrap())
 }
 
 #[test]
@@ -245,9 +314,19 @@ fn test_date_time_no_sec() {
         .midnight()
         .replace_time(time::Time::from_hms(12, 20, 45).unwrap());
 
-    let parsed = TimeSpec::parse_with_anchor("2024-08-08 14:10", anchor).unwrap();
+    let range = TimeRange::Point(TimeRef::DateTime(
+        time::Date::from_calendar_date(2024, time::Month::August, 08)
+            .unwrap()
+            .midnight()
+            .replace_time(time::Time::from_hms(14, 10, 00).unwrap()),
+    ));
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
+
+#[test]
+fn test_parse_date() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("2024-08-08").unwrap())
 }
 
 #[test]
@@ -261,9 +340,18 @@ fn test_date() {
         .midnight()
         .replace_time(time::Time::from_hms(12, 20, 45).unwrap());
 
-    let parsed = TimeSpec::parse_with_anchor("2024-08-08", anchor).unwrap();
+    let range = TimeRange::Point(TimeRef::DateTime(
+        time::Date::from_calendar_date(2024, time::Month::August, 08)
+            .unwrap()
+            .midnight(),
+    ));
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
+
+#[test]
+fn test_parse_time() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("15:28:59").unwrap())
 }
 
 #[test]
@@ -271,13 +359,18 @@ fn test_time() {
     let target = time::Date::from_calendar_date(2024, time::Month::August, 08)
         .unwrap()
         .midnight()
-        .replace_time(time::Time::from_hms(15, 27, 59).unwrap());
+        .replace_time(time::Time::from_hms(15, 28, 59).unwrap());
 
     let anchor = target.replace_time(time::Time::from_hms(12, 20, 45).unwrap());
 
-    let parsed = TimeSpec::parse_with_anchor("15:27:59", anchor).unwrap();
+    let range = TimeRange::Point(TimeRef::Time(time::Time::from_hms(15, 28, 59).unwrap()));
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
+}
+
+#[test]
+fn test_parse_time_no_sec() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("15:28").unwrap())
 }
 
 #[test]
@@ -289,35 +382,17 @@ fn test_time_no_sec() {
 
     let anchor = target.replace_time(time::Time::from_hms(12, 20, 45).unwrap());
 
-    let parsed = TimeSpec::parse_with_anchor("15:28", anchor).unwrap();
+    let range = TimeRange::Point(TimeRef::Time(time::Time::from_hms(15, 28, 00).unwrap()));
 
-    assert_eq!(parsed, TimeSpec::Point(target))
+    assert_eq!(range.evaluate(anchor), TimeSpec::Point(target))
 }
 
 #[test]
-fn test_before_time_no_sec() {
-    let target = time::Date::from_calendar_date(2024, time::Month::August, 08)
-        .unwrap()
-        .midnight()
-        .replace_time(time::Time::from_hms(15, 28, 00).unwrap());
-
-    let anchor = target.replace_time(time::Time::from_hms(12, 20, 45).unwrap());
-
-    let parsed = TimeSpec::parse_with_anchor("-15:28", anchor).unwrap();
-
-    assert_eq!(parsed, TimeSpec::Before(target))
+fn test_parse_before_time_no_sec() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("-15:28").unwrap())
 }
 
 #[test]
-fn test_after_time_no_sec() {
-    let target = time::Date::from_calendar_date(2024, time::Month::August, 08)
-        .unwrap()
-        .midnight()
-        .replace_time(time::Time::from_hms(15, 28, 00).unwrap());
-
-    let anchor = target.replace_time(time::Time::from_hms(12, 20, 45).unwrap());
-
-    let parsed = TimeSpec::parse_with_anchor("+15:28", anchor).unwrap();
-
-    assert_eq!(parsed, TimeSpec::After(target))
+fn test_parse_after_time_no_sec() {
+    insta::assert_debug_snapshot!(TimeRange::parser.parse("+15:28").unwrap())
 }

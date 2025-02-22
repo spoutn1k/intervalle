@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+expression: "TimeRange::parser.parse(\"15:28:59\").unwrap()"
+---
+Point(
+    Time(
+        15:28:59.0,
+    ),
+)

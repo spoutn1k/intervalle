@@ -1,0 +1,7 @@
+---
+source: src/lib.rs
+expression: "TimeRange::parser.parse(\"yesterday\").unwrap()"
+---
+Point(
+    Yesterday,
+)

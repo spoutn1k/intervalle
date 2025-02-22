@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+expression: "TimeRange::parser.parse(\"2024-08-08 14:10:11\").unwrap()"
+---
+Point(
+    DateTime(
+        2024-08-08 14:10:11.0,
+    ),
+)

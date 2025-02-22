@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+expression: "TimeRange::parser.parse(\"+15:28\").unwrap()"
+---
+After(
+    Time(
+        15:28:00.0,
+    ),
+)
